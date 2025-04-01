@@ -1,4 +1,4 @@
-from exercises.exercise import Exercise
+from .exercise import Exercise
 from google import genai
 
 class EngToSpanTranslationExercise(Exercise):

@@ -282,28 +282,41 @@ Nunca (never)
 from fsrs import Scheduler, Card, Rating, ReviewLog
 from datetime import datetime, timezone
 import random
-from concept import Concept
-from exercises.EngToSpanTranslationExercise import EngToSpanTranslationExercise
+from .concept import Concept
+from .exercises.EngToSpanTranslationExercise import EngToSpanTranslationExercise
 
 class Learner:
-    def __init__(self, concept_list, api_key):
+    def __init__(self, concept_list, api_key, session_file="stored_concepts.json"):
         self.scheduler = Scheduler()
         self.concepts = []
         self.concept_idx = 0
         self.concept_list = concept_list
-        self._load_stored_concepts()  # Load any existing progress
         self.api_key = api_key
+        self.session_file = session_file
+        self._load_stored_concepts()  # Load any existing progress
 
+    @classmethod
+    def load_from_file(cls, file_path, api_key):
+        """Create a Learner instance by loading from a file"""
+        learner = cls([], api_key, file_path)  # Empty concept list, will be loaded from file
+        return learner
+        
     def save(self):
         """Save the current state to disk"""
         self._store_concepts()
 
     def practice(self):
-        # this is the main method, all this actually does is just pick what type of session it is, then invokes the internal method for it
+        """Run one practice session"""
         concept = self._pick_concepts()
+        if concept is None:
+            print("\nCongratulations! You've completed all concepts.")
+            return False
+            
+        print(f"\nPracticing: {concept.name}")
         grade, description = concept.run_practice()
-        print(f"Grade: {grade}, Description: {description}")
+        print(f"Grade: {grade}/4 - {description}")
         self.save()  # Save progress after each practice session
+        return True
 
     def _pick_concepts(self):
         # we need to have the scheduler tell me whats the most urgent thing to review, if theres nothing that is due then I introduce a new concept
@@ -345,7 +358,7 @@ class Learner:
     def _load_stored_concepts(self):
         import json
         try:
-            with open("stored_concepts.json", "r") as f:
+            with open(self.session_file, "r") as f:
                 stored_data = json.load(f)
                 
                 # Restore scheduler and cards
@@ -362,11 +375,12 @@ class Learner:
                         card,
                         self.scheduler,
                         review_logs,
-                        EngToSpanTranslationExercise(concept_data["name"])
+                        EngToSpanTranslationExercise(concept_data["name"], self.api_key)
                     )
                     self.concepts.append(concept)
                 
                 self.concept_idx = stored_data["concept_idx"]
+                self.concept_list = stored_data.get("concept_list", self.concept_list)
         except FileNotFoundError:
             pass
         
@@ -375,6 +389,7 @@ class Learner:
         stored_data = {
             "scheduler": self.scheduler.to_dict(),
             "concept_idx": self.concept_idx,
+            "concept_list": self.concept_list,
             "concepts": [{
                 "name": c.name,
                 "subtopics": c._get_subtopics(),
@@ -383,5 +398,5 @@ class Learner:
             } for c in self.concepts]
         }
         
-        with open("stored_concepts.json", "w") as f:
+        with open(self.session_file, "w") as f:
             json.dump(stored_data, f, indent=2)
