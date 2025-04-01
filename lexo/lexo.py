@@ -282,50 +282,106 @@ Nunca (never)
 from fsrs import Scheduler, Card, Rating, ReviewLog
 from datetime import datetime, timezone
 import random
+from concept import Concept
+from exercises.EngToSpanTranslationExercise import EngToSpanTranslationExercise
 
 class Learner:
-    def __init__(concept_list):
+    def __init__(self, concept_list, api_key):
         self.scheduler = Scheduler()
-        self.cards_dict = {}
+        self.concepts = []
         self.concept_idx = 0
         self.concept_list = concept_list
+        self._load_stored_concepts()  # Load any existing progress
+        self.api_key = api_key
 
-    def start_prac(self):
+    def save(self):
+        """Save the current state to disk"""
+        self._store_concepts()
+
+    def practice(self):
         # this is the main method, all this actually does is just pick what type of session it is, then invokes the internal method for it
+        concept = self._pick_concepts()
+        grade, description = concept.run_practice()
+        print(f"Grade: {grade}, Description: {description}")
+        self.save()  # Save progress after each practice session
 
     def _pick_concepts(self):
         # we need to have the scheduler tell me whats the most urgent thing to review, if theres nothing that is due then I introduce a new concept
-        if self.cards_dict.length() == 0:
-            due_list = {}
+        if len(self.concepts) == 0:
+            due_list = []
         else:
-            due_list = {}
-            for concept, card in self.cards_dict.items():
-                if card.due == datetime.now(timezone.utc):
-                    due_list.append((concept, card))
+            due_list = []
+            for concept in self.concepts:
+                if concept._is_due():
+                    due_list.append(concept)
 
-        if due_list.length() == 0: # then we needa introduce a new concept
+        if len(due_list) == 0: # then we need to introduce a new concept
             concept = self._pick_new_concept()
-            return [concept]
+            return concept
         else:
-            # Pick 1-3 most overdue concepts and return them
-            num_concepts = random.randint(1, 3)
-            # Sort by due date and take the num_concepts most overdue concepts
-            sorted_concepts = sorted(due_list.items(), key=lambda x: x[1].due)
-            return [concept for concept, _ in sorted_concepts[:num_concepts]]
+            # Pick the most overdue concept and return it
+            # Sort by due date and take the most overdue concept
+            sorted_concepts = sorted(due_list, key=lambda x: x._get_card().due)
+            return sorted_concepts[0]
 
-    def _pick_new_concept(self):
+    def _pick_new_concept(self): 
         # needs to pick a new concept and make a new card and an entry into the dictionary
-        concept = self.concept_list[self.concept_idx]
+        if self.concept_idx >= len(self.concept_list):
+            return None
+            
+        # Get topic name and subtopics
+        concept_name = self.concept_list[self.concept_idx]
+        subtopics = self.concept_list[self.concept_idx + 1]
+        
         # make the card
         new_card = Card()
-        # add it to the master dict
-        entry = {concept: new_card}
-        self.cards_dict.update(entry)
+        # add it to the lists
+        new_concept = Concept(concept_name, subtopics, new_card, self.scheduler, [], EngToSpanTranslationExercise(concept_name, self.api_key))
+        self.concepts.append(new_concept)
+        self.concept_idx += 2   # move to the next concept (skip the subtopics list)
 
-        return concept
+        return new_concept
 
-
-
-            
-
-   
+    def _load_stored_concepts(self):
+        import json
+        try:
+            with open("stored_concepts.json", "r") as f:
+                stored_data = json.load(f)
+                
+                # Restore scheduler and cards
+                self.scheduler = Scheduler.from_dict(stored_data["scheduler"])
+                
+                # Restore concepts
+                for concept_data in stored_data["concepts"]:
+                    card = Card.from_dict(concept_data["card"])
+                    review_logs = [ReviewLog.from_dict(log) for log in concept_data["review_logs"]]
+                    
+                    concept = Concept(
+                        concept_data["name"],
+                        concept_data["subtopics"],
+                        card,
+                        self.scheduler,
+                        review_logs,
+                        EngToSpanTranslationExercise(concept_data["name"])
+                    )
+                    self.concepts.append(concept)
+                
+                self.concept_idx = stored_data["concept_idx"]
+        except FileNotFoundError:
+            pass
+        
+    def _store_concepts(self):
+        import json
+        stored_data = {
+            "scheduler": self.scheduler.to_dict(),
+            "concept_idx": self.concept_idx,
+            "concepts": [{
+                "name": c.name,
+                "subtopics": c._get_subtopics(),
+                "card": c._get_card().to_dict(),
+                "review_logs": [log.to_dict() for log in c._get_review_log()]
+            } for c in self.concepts]
+        }
+        
+        with open("stored_concepts.json", "w") as f:
+            json.dump(stored_data, f, indent=2)
